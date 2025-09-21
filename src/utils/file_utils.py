@@ -85,4 +85,4 @@ def find_jsonl_file(directory: str = None) -> str:
         print(f"查找JSONL文件失败: {e}")
         return ""
 
-
+print(find_jsonl_file())

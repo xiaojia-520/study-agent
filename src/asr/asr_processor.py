@@ -1,3 +1,4 @@
+from typing import Optional
 from funasr import AutoModel
 from config.settings import config
 import numpy as np
@@ -11,6 +12,7 @@ class ASRProcessor:
 
     def __init__(self):
         self.model = None
+        self.punc_processor: Optional[object] = None
         self._initialize_model()
 
     def _initialize_model(self):
@@ -34,8 +36,14 @@ class ASRProcessor:
         try:
             result = self.model.inference(audio_data * 32768)
             text = "".join(item["text"].replace(" ", "") for item in result)
+            if self.punc_processor and text:
+                try:
+                    text = self.punc_processor.add_punctuation(text)
+                except Exception as punc_error:
+                    logger.warning("标点处理失败，将使用原始文本: %s", punc_error)
             print(f"识别结果:{text}")
             return text
         except Exception as e:
             logger.error(f"语音识别失败: {e}")
+
             return ""

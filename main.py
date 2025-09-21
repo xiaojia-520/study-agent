@@ -5,7 +5,7 @@
 
 import sys
 import os
-
+import time
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -20,7 +20,7 @@ from src.utils.file_utils import ensure_directory
 from config.settings import config
 import argparse
 from threading import Thread
-
+from src.utils.file_utils import find_jsonl_file
 
 def main():
     """主函数"""
@@ -38,7 +38,7 @@ def main():
 
     # 命令行参数解析
     parser = argparse.ArgumentParser(description='实时语音转录与智能问答系统')
-    parser.add_argument('--mode', choices=['asr', 'qa', 'both'], default='qa',
+    parser.add_argument('--mode', choices=['asr', 'qa', 'both'], default='both',
                         help='运行模式: asr(仅语音识别), qa(仅问答), both(两者)')
     parser.add_argument('--lesson', type=str, help='课程名称')
     args = parser.parse_args()
@@ -55,8 +55,9 @@ def main():
 
         # 设置ASR处理器的标点处理器
         asr_processor.punc_processor = punc_processor
-
+        recording_started_at = None
         if args.mode in ['asr', 'both']:
+            recording_started_at = time.time()
             logger.info(f"开始录制课程: {lesson_name}")
             recorder = AudioRecorder()
             asr_thread = Thread(
@@ -67,16 +68,35 @@ def main():
                     embedding_manager=embedding_manager,
                     lesson_name=lesson_name
                 ),
-                daemon=True  # 后台线程，主程序结束时自动退出
+                daemon=True
             )
             asr_thread.start()
 
         if args.mode in ['qa', 'both']:
             rag_processor = RAGProcessor()
             # 查找最新的JSONL文件
-            from src.utils.file_utils import find_jsonl_file
-            jsonl_path = find_jsonl_file()
-            print("111")
+
+            wait_for_new_session = args.mode == 'both' and recording_started_at is not None
+            jsonl_path = ""
+            notified_waiting = False
+
+            while True:
+                candidate = find_jsonl_file()
+                if candidate:
+                    if not wait_for_new_session or os.path.getmtime(candidate) >= recording_started_at:
+                        jsonl_path = candidate
+                        if wait_for_new_session and notified_waiting:
+                            logger.info(f"检测到新的转录文件: {jsonl_path}")
+                        break
+
+                if not wait_for_new_session:
+                    break
+
+                if not notified_waiting:
+                    logger.info("等待新的转录文件生成...")
+                    notified_waiting = True
+
+                time.sleep(1)
             if jsonl_path:
                 logger.info(f"使用转录文件: {jsonl_path}")
 

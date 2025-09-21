@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Study Agent 实时课堂助手</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero__content">
+        <h1>实时语音转录与智能问答</h1>
+        <p>
+          通过浏览器即可启动录制、查看实时识别结果，并向课中知识库发起检索增强问答，让课堂内容与智能助教实时融合。
+        </p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card card--status">
+        <h2>录制控制</h2>
+        <p class="muted">
+          输入课程名称并开始录制，系统会自动进行 VAD、语音识别、打标点与向量入库。点击停止即可结束当前课程。
+        </p>
+        <form id="lesson-form" class="form-grid">
+          <label class="label" for="lesson-input">课程名称</label>
+          <input
+            id="lesson-input"
+            name="lesson"
+            type="text"
+            placeholder="例如：七年级数学上册-有理数"
+            value="{{ status.lesson or status.session_id or '' }}"
+            required
+          />
+          <div class="button-row">
+            <button type="submit" class="button">开始录制</button>
+            <button type="button" id="stop-button" class="button button--secondary">停止录制</button>
+          </div>
+        </form>
+        <div class="status" id="status-box" data-recording="{{ 'true' if status.recording else 'false' }}">
+          <span class="status__indicator"></span>
+          <div>
+            <p id="status-text">{{ '正在录制' if status.recording else '未在录制' }}</p>
+            <small id="status-details" class="muted">
+              {% if status.recording and status.lesson %}
+              课程：{{ status.lesson }}
+              {% elif status.session_id %}
+              最近课程：{{ status.session_id }}
+              {% else %}
+              尚未开始任何课程
+              {% endif %}
+            </small>
+          </div>
+        </div>
+        <div id="notice" class="notice" hidden></div>
+      </section>
+
+      <section class="card card--transcript">
+        <div class="card__header">
+          <h2>实时转录</h2>
+          <button type="button" id="refresh-transcript" class="button button--ghost">手动刷新</button>
+        </div>
+        <p class="muted">转录内容会自动每 5 秒刷新一次，也可以手动刷新查看最新识别片段。</p>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 22%">时间段</th>
+                <th style="width: 14%">时长</th>
+                <th>内容</th>
+              </tr>
+            </thead>
+            <tbody id="transcript-body">
+              {% for item in segments %}
+              <tr data-id="{{ item.id }}">
+                <td>{{ item.time_range }}</td>
+                <td>{{ item.duration_label }}</td>
+                <td>{{ item.text }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p id="transcript-empty" class="muted" {% if segments %}hidden{% endif %}>
+          暂无转录内容，请先开始录制或稍等片刻。
+        </p>
+      </section>
+
+      <section class="card card--qa">
+        <h2>智能问答</h2>
+        <p class="muted">基于最新课程内容和向量检索进行回答，可随时提问巩固知识点。</p>
+        <form id="ask-form">
+          <label class="label" for="question">问题内容</label>
+          <textarea
+            id="question"
+            name="question"
+            rows="4"
+            placeholder="例如：有理数的加法需要注意什么？"
+            required
+          ></textarea>
+          <button type="submit" class="button">发送问题</button>
+        </form>
+        <div id="answer" class="answer" hidden>
+          <h3>回答</h3>
+          <pre id="answer-text"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <small>© {{ 2024 }} Study Agent Demo</small>
+    </footer>
+
+    <script>
+      const initialStatus = {{ status | tojson }};
+      const initialSegments = {{ segments | tojson }};
+
+      const lessonForm = document.getElementById("lesson-form");
+      const lessonInput = document.getElementById("lesson-input");
+      const stopButton = document.getElementById("stop-button");
+      const statusBox = document.getElementById("status-box");
+      const statusText = document.getElementById("status-text");
+      const statusDetails = document.getElementById("status-details");
+      const noticeBox = document.getElementById("notice");
+      const transcriptBody = document.getElementById("transcript-body");
+      const transcriptEmpty = document.getElementById("transcript-empty");
+      const refreshTranscriptButton = document.getElementById("refresh-transcript");
+      const askForm = document.getElementById("ask-form");
+      const answerBox = document.getElementById("answer");
+      const answerText = document.getElementById("answer-text");
+
+      let noticeTimer = null;
+      let transcriptTimer = null;
+
+      function showNotice(message, variant = "info") {
+        if (!noticeBox) return;
+        noticeBox.textContent = message;
+        noticeBox.dataset.variant = variant;
+        noticeBox.hidden = false;
+        if (noticeTimer) {
+          window.clearTimeout(noticeTimer);
+        }
+        noticeTimer = window.setTimeout(() => {
+          noticeBox.hidden = true;
+        }, 5000);
+      }
+
+      function updateStatus(status) {
+        if (!status) return;
+        const recording = Boolean(status.recording);
+        statusBox.dataset.recording = recording ? "true" : "false";
+        statusText.textContent = recording ? "正在录制" : "未在录制";
+        if (recording && status.lesson) {
+          statusDetails.textContent = `课程：${status.lesson}`;
+        } else if (status.session_id) {
+          statusDetails.textContent = `最近课程：${status.session_id}`;
+        } else {
+          statusDetails.textContent = "尚未开始任何课程";
+        }
+        if (!lessonInput.value && status.session_id) {
+          lessonInput.value = status.session_id;
+        }
+      }
+
+      function renderTranscript(segments) {
+        transcriptBody.innerHTML = "";
+        if (!segments || !segments.length) {
+          transcriptEmpty.hidden = false;
+          return;
+        }
+        transcriptEmpty.hidden = true;
+        const fragment = document.createDocumentFragment();
+        segments.forEach((item) => {
+          const row = document.createElement("tr");
+          row.dataset.id = item.id;
+          const timeCell = document.createElement("td");
+          timeCell.textContent = item.time_range || "-";
+          const durationCell = document.createElement("td");
+          durationCell.textContent = item.duration_label || "-";
+          const textCell = document.createElement("td");
+          textCell.textContent = item.text || "";
+          row.append(timeCell, durationCell, textCell);
+          fragment.append(row);
+        });
+        transcriptBody.append(fragment);
+      }
+
+      async function refreshStatus() {
+        try {
+          const response = await fetch("/api/status");
+          const payload = await response.json();
+          if (payload.success) {
+            updateStatus(payload.status);
+          }
+        } catch (error) {
+          console.error("刷新状态失败", error);
+        }
+      }
+
+      async function refreshTranscript(options = { silent: false }) {
+        const silent = options?.silent ?? false;
+        try {
+          const response = await fetch("/api/transcript?limit=50");
+          const payload = await response.json();
+          if (!payload.success) {
+            throw new Error(payload.message || "获取转录失败");
+          }
+          renderTranscript(payload.segments || []);
+        } catch (error) {
+          console.error("刷新转录失败", error);
+          if (!silent) {
+            showNotice(error.message || "刷新转录失败", "error");
+          }
+        }
+      }
+
+      function scheduleTranscriptPolling() {
+        if (transcriptTimer) {
+          window.clearInterval(transcriptTimer);
+        }
+        transcriptTimer = window.setInterval(() => {
+          refreshTranscript({ silent: true });
+          refreshStatus();
+        }, 5000);
+      }
+
+      lessonForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const lesson = lessonInput.value.trim();
+        if (!lesson) {
+          return;
+        }
+        const payload = { lesson };
+        try {
+          const response = await fetch("/api/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.message || "启动录制失败");
+          }
+          showNotice(data.message, "success");
+          updateStatus(data.status);
+          await refreshTranscript({ silent: true });
+        } catch (error) {
+          showNotice(error.message || "启动录制失败", "error");
+        }
+      });
+
+      stopButton.addEventListener("click", async () => {
+        try {
+          const response = await fetch("/api/stop", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.message || "停止录制失败");
+          }
+          showNotice(data.message, "success");
+          updateStatus(data.status);
+          await refreshTranscript({ silent: true });
+        } catch (error) {
+          showNotice(error.message || "停止录制失败", "error");
+        }
+      });
+
+      refreshTranscriptButton.addEventListener("click", () => {
+        refreshTranscript({ silent: false });
+      });
+
+      askForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(askForm);
+        const question = formData.get("question");
+        if (!question) {
+          return;
+        }
+        answerBox.hidden = false;
+        answerText.textContent = "正在生成回答...";
+        try {
+          const response = await fetch("/api/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.answer || "问答失败");
+          }
+          answerText.textContent = data.answer;
+        } catch (error) {
+          answerText.textContent = error.message || "问答失败，请稍后再试。";
+          showNotice(error.message || "问答失败，请稍后再试。", "error");
+        }
+      });
+
+      updateStatus(initialStatus);
+      renderTranscript(initialSegments);
+      scheduleTranscriptPolling();
+    </script>
+  </body>
+</html>

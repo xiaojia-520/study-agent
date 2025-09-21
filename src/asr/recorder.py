@@ -2,8 +2,10 @@ import sounddevice as sd
 import numpy as np
 from typing import Optional, Callable
 from config.settings import config
-from ..utils.time_utils import get_current_time
 import logging
+from pathlib import Path
+from ..utils.file_utils import BASE_DIR, ensure_directory, get_next_id, write_jsonl
+from ..utils.time_utils import get_current_time, format_time
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +16,13 @@ class AudioRecorder:
     def __init__(self):
         self.stream = None
         self.is_recording = False
+        self.log_file: Optional[str] = None
+        self.lesson_name: Optional[str] = None
 
     def start_recording(self, vad_processor, asr_processor, embedding_manager, lesson_name: str):
         """开始录制和处理"""
         self.is_recording = True
+        self.lesson_name = lesson_name
 
         with sd.InputStream(
                 samplerate=config.SAMPLE_RATE,
@@ -29,8 +34,6 @@ class AudioRecorder:
 
     def _recording_loop(self, stream, vad_processor, asr_processor, embedding_manager, lesson_name: str):
         """录制循环"""
-        from ..utils.file_utils import get_next_id, write_jsonl
-        from ..utils.time_utils import format_time
 
         audio_chunk = []
         prev_audio_chunk = []
@@ -39,7 +42,11 @@ class AudioRecorder:
         speaking_start = None
         prev_chunk_stride = int(0.2 * config.SAMPLE_RATE / 512)
 
-        LOG_FILE = f"data/outputs/json/{format_time(get_current_time(), '%Y-%m-%d_%H-%M-%S')}.jsonl"
+        log_dir = Path(BASE_DIR) / "data" / "outputs" / "json"
+        ensure_directory(str(log_dir))
+        log_file_path = log_dir / f"{format_time(get_current_time(), '%Y-%m-%d_%H-%M-%S')}.jsonl"
+        self.log_file = str(log_file_path)
+
 
         while self.is_recording:
             samples, overflowed = stream.read(512)
@@ -73,8 +80,14 @@ class AudioRecorder:
                     logger.info(f"说话区间[{format_time(speaking_start)[-8:]}-{format_time(silence_start)[-8:]}]")
 
                 self._process_audio_segment(
-                    prev_audio_chunk, audio_chunk, speaking_start, silence_start,
-                    asr_processor, embedding_manager, lesson_name, LOG_FILE
+                    prev_audio_chunk,
+                    audio_chunk,
+                    speaking_start,
+                    silence_start,
+                    asr_processor,
+                    embedding_manager,
+                    lesson_name,
+                    self.log_file,
                 )
 
                 speaking_start = None
@@ -83,7 +96,6 @@ class AudioRecorder:
     def _process_audio_segment(self, prev_chunk, current_chunk, start_time, end_time,
                                asr_processor, embedding_manager, lesson_name, log_file):
         """处理音频片段"""
-        from ..utils.file_utils import get_next_id, write_jsonl
 
         if not prev_chunk and not current_chunk:
             return

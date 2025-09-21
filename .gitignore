@@ -1,0 +1,5 @@
+__pycache__/
+.idea/
+model/
+/data/models
+/data/outputs

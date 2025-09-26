@@ -57,11 +57,10 @@ class EmbeddingManager:
     def _process_embedding_item(self, item):
         logger.info("嵌入")
         """处理单个嵌入项"""
-        text, payload, id_val = item
-        logger.info(f"id:{id_val}")
+        text, payload = item
         try:
             vector = self.embedding_model.embed_documents([text])[0]
-            pid = str(uuid5(NAMESPACE_DNS, f"{payload['session_id']}-{id_val}"))
+            pid = str(uuid5(NAMESPACE_DNS, f"{payload['session_id']}-{payload['start']}"))
             self.qdrant_manager.upsert_vector(pid, vector, payload)
         except Exception as e:
             logger.error(f"向量化出错: {e}")
@@ -122,7 +121,7 @@ class EmbeddingManager:
             }
 
             # 生成批量ID并入队
-            self.task_queue.put_nowait((combined_text, batch_payload, id_val))
+            self.task_queue.put_nowait((combined_text, batch_payload))
             logger.info("入队")
             # 清空缓冲并增加批次号
             self.batch_buffer.clear()

@@ -1,10 +1,14 @@
-from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, VectorParams, Distance
 from langchain_huggingface import HuggingFaceEmbeddings
-from config.settings import config
+from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import VectorParams, Distance
+import sounddevice as sd
 
-client = QdrantClient(host="localhost", port=6333)
+
+
+class Tools():
+    def __init__(self):
+        self.client = QdrantClient(host="localhost", port=6333)
 
 
 def creat_collection(collection_name):
@@ -45,4 +49,5 @@ def delete_collection(collection_name):
     return client.delete_collection(collection_name)
 
 
-delete_collection("asr")
+def sounddevice():
+    return print(sd.query_devices('default'))

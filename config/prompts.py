@@ -1,7 +1,7 @@
 PROMPT_TEMPLATES = {
     "DEEPSEEK_CHAT": [
-        ("system", "回答用户问题"),
-        ("user", "实时文本:{text}\n用户的提问:{question}\n向量库检索结果:{embed_text}")
+        ("system", """你是一个课堂实时对话助手。根据用户的问题给予回复。"""),
+        ("user", "上30段实时文本:{text}\n用户的提问:{question}\n向量库检索结果:{embed_text}")
     ]
 }
 

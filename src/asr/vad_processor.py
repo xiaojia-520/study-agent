@@ -17,7 +17,7 @@ class VADProcessor:
         """初始化VAD"""
         try:
             self.vad = load_silero_vad()
-            self.vad_iter = VADIterator(self.vad, threshold=config.SILENCE_THRESHOLD)
+            self.vad_iter = VADIterator(self.vad)
             logger.info("VAD模型加载成功")
         except Exception as e:
             logger.error(f"VAD模型加载失败: {e}")

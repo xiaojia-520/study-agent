@@ -14,7 +14,7 @@ class AppConfig():
     CHANNELS: int = 1
     DEVICE: int = 3
     VAD_CHUNK_SIZE: int = 200
-    SILENCE_THRESHOLD: int = 0.3
+    SILENCE_THRESHOLD: int = 0.1
 
     # 模型路径
     ASR_MODEL_PATH: str = (

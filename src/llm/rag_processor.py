@@ -8,6 +8,8 @@ import json
 from datetime import datetime
 import logging
 from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client import QdrantClient
+from config.settings import config
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +39,6 @@ class RAGProcessor:
         """搜索相关上下文"""
         try:
             query_vector = self.embedding_manager.embedding_model.embed_query(query)
-            from qdrant_client import QdrantClient
-            from config.settings import config
             query_filter = Filter(
                 must=[FieldCondition(key="session_id", match=MatchValue(value=f"{session_id}"))]
             )
@@ -85,7 +85,7 @@ class RAGProcessor:
         cleaned_items = self.clean_jsonl_content(items)
 
         md_table = ["| id | 时间区间 | 文本 |", "|---|---|---|"]
-        for idx, item in enumerate(cleaned_items[-10:], 1):  # 只显示最后10条
+        for idx, item in enumerate(cleaned_items[-30:], 1):  # 只显示最后10条
             start_ts = item.get("start")
             end_ts = item.get("end")
 
@@ -107,9 +107,12 @@ class RAGProcessor:
             # 搜索相关上下文
             context_results = self.search_context(question, limit=5, session_id=session_id)
             context_text = "\n".join([result.get("combined_text", "") for result in context_results])
+            logger.info(f"json源文本:{context_text}")
+            logger.info(f"jsonclear:{context_text}")
 
             # 获取实时文本
             realtime_text = self.jsonl_to_markdown(jsonl_path) if jsonl_path else "无实时文本"
+            logger.info(f"实时文本{realtime_text}")
 
             # 构建提示词
             chain = self.prompt_template | self.model_manager.get_model()

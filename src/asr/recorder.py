@@ -47,7 +47,6 @@ class AudioRecorder:
         log_file_path = log_dir / f"{format_time(get_current_time(), '%Y-%m-%d_%H-%M-%S')}.jsonl"
         self.log_file = str(log_file_path)
 
-
         while self.is_recording:
             samples, overflowed = stream.read(512)
             if overflowed:

@@ -87,9 +87,22 @@
       </section>
 
       <section class="card card--qa">
-        <h2>智能问答</h2>
+        <div class="card__header">
+          <h2>智能问答</h2>
+        </div>
         <p class="muted">基于最新课程内容和向量检索进行回答，可随时提问巩固知识点。</p>
-        <form id="ask-form">
+        <div class="qa-console">
+          <div id="conversation" class="chat-thread" aria-live="polite" aria-label="智能助教对话记录">
+            {% for item in history %}
+            <div class="chat-thread__item chat-thread__item--{{ item.role }}">
+              <span class="chat-thread__role">{{ '助教' if item.role == 'assistant' else '我' }}</span>
+              <div class="chat-thread__bubble">{{ item.content | e }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          <p id="conversation-empty" class="muted" {% if history %}hidden{% endif %}>目前还没有对话记录，快来提问吧。</p>
+        </div>
+        <form id="ask-form" class="ask-form">
           <label class="label" for="question">问题内容</label>
           <textarea
             id="question"
@@ -100,10 +113,17 @@
           ></textarea>
           <button type="submit" class="button">发送问题</button>
         </form>
-        <div id="answer" class="answer" hidden>
-          <h3>回答</h3>
-          <pre id="answer-text"></pre>
+      </section>
+
+
+      <section class="card card--history">
+        <div class="card__header">
+          <h2>对话历史</h2>
+          <button type="button" id="refresh-history" class="button button--ghost">刷新</button>
         </div>
+        <p class="muted">展示最近的提问与回答记录，便于回顾知识点或继续追问。</p>
+        <div id="history-empty" class="muted" hidden>暂无对话记录，向助教提问即可开始。</div>
+        <ul id="history-list" class="history-list"></ul>
       </section>
     </main>
 
@@ -114,6 +134,7 @@
     <script>
       const initialStatus = {{ status | tojson }};
       const initialSegments = {{ segments | tojson }};
+      const initialHistory = {{ history | tojson }};
 
       const lessonForm = document.getElementById("lesson-form");
       const lessonInput = document.getElementById("lesson-input");
@@ -126,11 +147,15 @@
       const transcriptEmpty = document.getElementById("transcript-empty");
       const refreshTranscriptButton = document.getElementById("refresh-transcript");
       const askForm = document.getElementById("ask-form");
-      const answerBox = document.getElementById("answer");
-      const answerText = document.getElementById("answer-text");
+      const questionInput = document.getElementById("question");
+      const conversationThread = document.getElementById("conversation");
+      const conversationEmpty = document.getElementById("conversation-empty");
+      const askSubmitButton = askForm.querySelector('button[type="submit"]');
+
 
       let noticeTimer = null;
       let transcriptTimer = null;
+      let isStreaming = false;
 
       function showNotice(message, variant = "info") {
         if (!noticeBox) return;
@@ -185,6 +210,33 @@
         transcriptBody.append(fragment);
       }
 
+      function renderHistory(history) {
+        historyList.innerHTML = "";
+        const items = Array.isArray(history) ? history : [];
+        if (!items.length) {
+          historyEmpty.hidden = false;
+          return;
+        }
+        historyEmpty.hidden = true;
+        const fragment = document.createDocumentFragment();
+        items.forEach((item, index) => {
+          const entry = document.createElement("li");
+          entry.className = "history-item";
+
+          const question = document.createElement("p");
+          question.className = "history-item__question";
+          question.textContent = `Q${index + 1}：${item.question || ""}`;
+
+          const answer = document.createElement("p");
+          answer.className = "history-item__answer";
+          answer.textContent = item.answer ? `A${index + 1}：${item.answer}` : "等待回答";
+
+          entry.append(question, answer);
+          fragment.append(entry);
+        });
+        historyList.append(fragment);
+      }
+
       async function refreshStatus() {
         try {
           const response = await fetch("/api/status");
@@ -214,6 +266,23 @@
         }
       }
 
+      async function refreshHistory(options = { silent: false }) {
+        const silent = options?.silent ?? false;
+        try {
+          const response = await fetch("/api/history?limit=20");
+          const payload = await response.json();
+          if (!payload.success) {
+            throw new Error(payload.message || "获取历史记录失败");
+          }
+          renderHistory(payload.history || []);
+        } catch (error) {
+          console.error("刷新历史记录失败", error);
+          if (!silent) {
+            showNotice(error.message || "刷新历史记录失败", "error");
+          }
+        }
+      }
+
       function scheduleTranscriptPolling() {
         if (transcriptTimer) {
           window.clearInterval(transcriptTimer);
@@ -221,6 +290,7 @@
         transcriptTimer = window.setInterval(() => {
           refreshTranscript({ silent: true });
           refreshStatus();
+          refreshHistory({ silent: true });
         }, 5000);
       }
 
@@ -268,34 +338,151 @@
         refreshTranscript({ silent: false });
       });
 
-      askForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const formData = new FormData(askForm);
-        const question = formData.get("question");
-        if (!question) {
+      function toggleConversationEmpty() {
+        if (!conversationEmpty) return;
+        conversationEmpty.hidden = conversationThread.children.length > 0;
+      }
+
+      function appendChatMessage(role, content = "", options = {}) {
+        const { scroll = true } = options;
+        const item = document.createElement("div");
+        item.className = `chat-thread__item chat-thread__item--${role}`;
+        const roleLabel = document.createElement("span");
+        roleLabel.className = "chat-thread__role";
+        roleLabel.textContent = role === "assistant" ? "助教" : "我";
+        const bubble = document.createElement("div");
+        bubble.className = "chat-thread__bubble";
+        bubble.textContent = content;
+        item.append(roleLabel, bubble);
+        conversationThread.append(item);
+        if (scroll) {
+          conversationThread.scrollTop = conversationThread.scrollHeight;
+        }
+        toggleConversationEmpty();
+        return bubble;
+      }
+
+      function renderHistory(history) {
+        conversationThread.innerHTML = "";
+        if (!history || !history.length) {
+          toggleConversationEmpty();
           return;
         }
-        answerBox.hidden = false;
-        answerText.textContent = "正在生成回答...";
+        history.forEach((entry, index) => {
+          if (!entry || !entry.role) return;
+          appendChatMessage(entry.role, entry.content || "", {
+            scroll: index === history.length - 1,
+          });
+        });
+      }
+
+      function processSSEBuffer(buffer, handlers) {
+        let remaining = buffer;
+        while (true) {
+          const boundary = remaining.indexOf("\n\n");
+          if (boundary === -1) {
+            break;
+          }
+          const rawEvent = remaining.slice(0, boundary).trim();
+          remaining = remaining.slice(boundary + 2);
+          if (!rawEvent.startsWith("data:")) {
+            continue;
+          }
+          const payloadStr = rawEvent.slice(5).trim();
+          if (!payloadStr) {
+            continue;
+          }
+          let payload;
+          try {
+            payload = JSON.parse(payloadStr);
+          } catch (error) {
+            console.error("解析流式数据失败", error);
+            continue;
+          }
+          handlers(payload);
+        }
+        return remaining;
+      }
+
+      askForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (isStreaming) {
+          return;
+        }
+
+        const question = questionInput.value.trim();
+        if (!question) {
+          showNotice("请输入想要咨询的问题。", "error");
+          return;
+        }
+
+        isStreaming = true;
+        askSubmitButton.disabled = true;
+        questionInput.disabled = true;
+
+        appendChatMessage("user", question);
+        const assistantBubble = appendChatMessage("assistant", "");
+        questionInput.value = "";
+
+        const decoder = new TextDecoder("utf-8");
         try {
-          const response = await fetch("/api/ask", {
+          const response = await fetch("/api/ask_stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ question }),
           });
-          const data = await response.json();
-          if (!response.ok || !data.success) {
-            throw new Error(data.answer || "问答失败");
+          const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+          if (!reader) {
+            throw new Error("当前浏览器不支持流式响应。");
           }
-          answerText.textContent = data.answer;
+
+          let buffer = "";
+          const handlePayload = (payload) => {
+            if (!payload || !payload.type) {
+              return;
+            }
+            if (payload.type === "delta") {
+              assistantBubble.textContent += payload.content || "";
+              conversationThread.scrollTop = conversationThread.scrollHeight;
+            } else if (payload.type === "error") {
+              throw new Error(payload.message || "问答失败，请稍后再试。");
+            } else if (payload.type === "complete") {
+              renderHistory(payload.history || []);
+            }
+          };
+
+          while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            try {
+              buffer = processSSEBuffer(buffer, handlePayload);
+            } catch (error) {
+              throw error;
+            }
+            if (done) {
+              buffer = processSSEBuffer(buffer + "\n\n", handlePayload);
+              break;
+            }
+          }
+
+          if (!assistantBubble.textContent) {
+            assistantBubble.textContent = "未生成回答。";
+          }
         } catch (error) {
-          answerText.textContent = error.message || "问答失败，请稍后再试。";
+          assistantBubble.textContent = error.message || "问答失败，请稍后再试。";
           showNotice(error.message || "问答失败，请稍后再试。", "error");
+        } finally {
+          askSubmitButton.disabled = false;
+          questionInput.disabled = false;
+          questionInput.focus();
+          isStreaming = false;
+          toggleConversationEmpty();
         }
       });
 
       updateStatus(initialStatus);
       renderTranscript(initialSegments);
+      renderHistory(initialHistory);
       scheduleTranscriptPolling();
     </script>
   </body>

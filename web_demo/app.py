@@ -10,9 +10,9 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 # Ensure the project root is available for imports when running the app directly.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +33,12 @@ app = Flask(
     template_folder=str(Path(__file__).parent / "templates"),
     static_folder=str(Path(__file__).parent / "static"),
 )
+
+
+def _sse_message(payload: Dict[str, object]) -> str:
+    """Format payload into a server-sent event message string."""
+
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _safe_int(value: object) -> Optional[int]:
@@ -136,6 +142,7 @@ class StudyAgentWebBridge:
         self.current_lesson: Optional[str] = None
         self.last_session_id: Optional[str] = None
         self.last_log_file: Optional[Path] = None
+        self.history_limit: int = 20
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -171,6 +178,7 @@ class StudyAgentWebBridge:
             self.current_lesson = lesson_name
             self.last_session_id = lesson_name
             self.last_log_file = None
+            self.rag_processor.reset_memory(lesson_name)
 
             # 重置批处理状态，避免历史残留影响新课程。
             try:
@@ -289,14 +297,16 @@ class StudyAgentWebBridge:
         rows.sort(key=lambda item: item.identifier)
         return rows
 
-    def answer_question(self, question: str) -> Tuple[bool, str]:
+    def answer_question(self, question: str) -> Tuple[bool, str, List[Dict[str, str]]]:
         cleaned = question.strip()
         if not cleaned:
-            return False, "请输入想要咨询的问题。"
+            history = self.get_conversation_history()
+            return False, "请输入想要咨询的问题。", history
 
         jsonl_path = self.get_active_jsonl_path()
         if not jsonl_path:
-            return False, "当前没有可用的转录内容，请先开始录制课程。"
+            history = self.get_conversation_history()
+            return False, "当前没有可用的转录内容，请先开始录制课程。", history
 
         session_id = self.get_session_id()
         try:
@@ -305,10 +315,34 @@ class StudyAgentWebBridge:
                 str(jsonl_path),
                 session_id=session_id,
             )
-            return True, answer
+            history = self.get_conversation_history(session_id=session_id)
+            return True, answer, history
         except Exception as exc:  # pragma: no cover - 统一兜底错误
             logger.error("生成回答失败: %s", exc, exc_info=True)
-            return False, "生成回答时出现异常，请稍后再试。"
+            history = self.get_conversation_history(session_id=session_id)
+            return False, "生成回答时出现异常，请稍后再试。", history
+
+    def stream_answer(self, question: str) -> Iterator[str]:
+        cleaned = question.strip()
+        if not cleaned:
+            raise ValueError("请输入想要咨询的问题。")
+
+        jsonl_path = self.get_active_jsonl_path()
+        if not jsonl_path:
+            raise FileNotFoundError("当前没有可用的转录内容，请先开始录制课程。")
+
+        session_id = self.get_session_id()
+        return self.rag_processor.generate_response_stream(
+            cleaned,
+            str(jsonl_path),
+            session_id=session_id,
+        )
+
+    def get_conversation_history(
+            self, session_id: Optional[str] = None, limit: int = 30
+    ) -> List[Dict[str, str]]:
+        target_session = session_id or self.get_session_id()
+        return self.rag_processor.get_history(target_session, limit=limit)
 
     def get_status(self) -> Dict[str, object]:
         with self.lock:
@@ -341,7 +375,10 @@ BRIDGE = StudyAgentWebBridge(PROJECT_ROOT)
 def index():
     segments = [row.to_dict() for row in BRIDGE.get_recent_segments(limit=20)]
     status = BRIDGE.get_status()
-    return render_template("index.html", segments=segments, status=status)
+    history = BRIDGE.get_conversation_history(limit=40)
+    return render_template(
+        "index.html", segments=segments, status=status, history=history
+    )
 
 
 @app.get("/api/status")
@@ -378,11 +415,101 @@ def api_transcript():
 def api_ask():
     payload = request.get_json(silent=True) or {}
     question = str(payload.get("question", ""))
-    success, answer = BRIDGE.answer_question(question)
+    success, answer, history = BRIDGE.answer_question(question)
     status_code = 200 if success else 400
-    return jsonify({"success": success, "answer": answer}), status_code
+    return (
+        jsonify({"success": success, "answer": answer, "history": history}),
+        status_code,
+    )
 
+
+@app.post("/api/ask_stream")
+def api_ask_stream():
+    payload = request.get_json(silent=True) or {}
+    question = str(payload.get("question", ""))
+
+    cleaned = question.strip()
+    if not cleaned:
+        response = Response(
+            _sse_message({"type": "error", "message": "请输入想要咨询的问题。"}),
+            mimetype="text/event-stream",
+            status=400,
+        )
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
+
+    if not BRIDGE.get_active_jsonl_path():
+        response = Response(
+            _sse_message(
+                {
+                    "type": "error",
+                    "message": "当前没有可用的转录内容，请先开始录制课程。",
+                }
+            ),
+            mimetype="text/event-stream",
+            status=400,
+        )
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
+
+    @app.get("/api/history")
+    def api_history():
+        limit = request.args.get("limit", default=20, type=int)
+        try:
+            history = BRIDGE.get_conversation_history(limit=limit)
+            return jsonify({
+                "success": True,
+                "history": history
+            })
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e)
+            }), 500
+
+    def generate():
+        session_id = BRIDGE.get_session_id()
+        try:
+            for chunk in BRIDGE.stream_answer(cleaned):
+                yield _sse_message({"type": "delta", "content": chunk})
+        except Exception as exc:  # pragma: no cover - streaming failure
+            logger.error("流式生成回答失败: %s", exc, exc_info=True)
+            if isinstance(exc, FileNotFoundError):
+                message = "当前没有可用的转录内容，请先开始录制课程。"
+            elif isinstance(exc, ValueError):
+                message = str(exc)
+            else:
+                message = "生成回答时出现异常，请稍后再试。"
+            yield _sse_message({"type": "error", "message": message})
+            return
+
+        history = BRIDGE.get_conversation_history(session_id=session_id)
+        yield _sse_message({"type": "complete", "history": history})
+
+    response = Response(
+        stream_with_context(generate()), mimetype="text/event-stream", status=200
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+@app.get("/api/history")
+def api_history():
+    limit = request.args.get("limit", default=20, type=int)
+    try:
+        history = BRIDGE.get_conversation_history(limit=limit)
+        return jsonify({
+            "success": True,
+            "history": history
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 if __name__ == "__main__":  # pragma: no cover - script entry point
     logging.basicConfig(level=logging.INFO)
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=True, use_reloader=False)

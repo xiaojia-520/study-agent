@@ -26,7 +26,7 @@ class EmbeddingManager:
         """初始化嵌入模型"""
         try:
             self.embedding_model = HuggingFaceEmbeddings(
-                model_name=r"C:\Users\xiaojia\Desktop\study-agent-master\data\models\embedding\bge-small-zh-v1.5",  # 直接使用字符串
+                model_name=str(config.EMBEDDING_MODEL_PATH),
                 model_kwargs={"device": "cpu"},
                 encode_kwargs={"normalize_embeddings": True},
             )

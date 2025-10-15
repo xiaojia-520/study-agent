@@ -1,80 +1,130 @@
-# Study Agent
+# 🧠 Study Agent
 
-面向课堂或会议场景的“Study Agent”是一套将**实时语音转录**、**知识整理**和**检索式问答**整合在一起的多模态学习助手。系统会自动监听语音、分段、转写、打标点，并将文本增量写入 JSONL 与向量数据库，最终通过 RAG（Retrieval-Augmented Generation）在问答时召回最相关的上下文。
+面向课堂或会议场景的 **Study Agent** 是一套将 **实时语音转录（ASR）**、**结构化笔记** 与 **检索增强问答（RAG）** 整合在一起的多模态学习助手。系统会监听语音、进行端点检测、转写与自动标点，并把文本增量写入 JSONL 与向量数据库，问答时通过 RAG 召回最相关上下文。
+
+---
 
 ## ✨ 核心功能
-- **实时录音与端点检测**：使用 `sounddevice` 采集音频，结合自定义的 `VADProcessor` 自动区分说话段与静音段。
-- **高质量语音识别**：基于 FunASR 的 `speech_paraformer-large-vad-punc` 模型完成转写，可按课程名称加载热词提升识别率。
-- **自动标点与文本清洗**：`PuncProcessor` 对识别文本补齐标点，`RAGProcessor` 在问答前再次规整口语化填充词。
-- **结构化笔记落地**：每个语音片段被写入 `data/outputs/json/*.jsonl`，记录开始/结束时间、时长、文本等信息。
-- **向量化与知识库同步**：`EmbeddingManager` 按批处理转写内容，调用 `bge-small-zh-v1.5` 生成向量并存入 Qdrant，支持后续语义检索。
-- **检索增强问答**：`RAGProcessor` 同时读取实时 JSONL 与向量库召回的上下文，通过大模型生成结构化答案。
-- **可视化 Web Demo**：`web_demo/app.py` 提供 Flask 前端，便于在浏览器中启动/停止录制并查看转写结果。
+- **实时录音与端点检测**：`sounddevice` 采集音频 + 自研 `VADProcessor` 区分语音段/静音段  
+- **高质量语音识别**：基于 FunASR 的 `speech_paraformer-large-vad-punc` 中文 ASR，支持按课程热词  
+- **自动标点与文本清洗**：`PuncProcessor` 补标点，问答前由 `RAGProcessor` 规整口语化文本  
+- **结构化笔记**：每段语音写入 `data/outputs/json/*.jsonl`，包含起止时间、时长、文本等  
+- **向量化与语义检索**：`bge-small-zh-v1.5` 生成向量，经 `EmbeddingManager` 写入 Qdrant  
+- **检索增强问答（RAG）**：从 JSONL + 向量库召回上下文，调用 LLM 生成结构化答案  
+- **可视化 Web Demo**：`web_demo/app.py`（Flask）用于浏览器端录制/查看转写与历史问答
+
+---
 
 ## 🗂️ 目录速览
-```
 study-agent/
-├─ main.py                 # 命令行入口，串联录音、ASR、嵌入、RAG
+├─ main.py # 命令行入口：ASR + Embedding + RAG
+├─ setup_model.bat # （可选）模型准备脚本
 ├─ config/
-│  ├─ settings.py          # 采样率、模型路径、Qdrant 等全局配置
-│  └─ prompts.py           # LLM 提示词模板
+│ ├─ settings.py # 全局配置（采样率、Qdrant、设备等）
+│ ├─ prompts.py # LLM 提示词模板
+│ ├─ .env.example # 环境变量示例（请复制为 .env 并填写）
 ├─ src/
-│  ├─ asr/                 # 录音、VAD、ASR、标点等语音处理模块
-│  ├─ embedding/           # 嵌入模型与 Qdrant 管理
-│  ├─ llm/                 # 大模型封装与 RAG 逻辑
-│  ├─ models/              # 业务数据模型
-│  └─ utils/               # 日志、文件、时间等工具
-├─ web_demo/               # Flask Web 端示例
+│ ├─ asr/ # 录音、VAD、ASR、标点
+│ ├─ embedding/ # 向量生成与 Qdrant 客户端
+│ ├─ llm/ # 模型封装与 RAG 逻辑
+│ ├─ models/ # 数据结构/Schema
+│ └─ utils/ # 日志/文件/时间等工具
+├─ web_demo/ # Flask Web 前端
+├─ data/
+│ ├─ models/ # 模型目录（.gitkeep 占位，不上传权重）
+│ ├─ outputs/json/ # 转写结果（JSONL）
+│ └─ logs/ # 运行日志
 ├─ requirements.txt
-└─ data/                   # 建议放置模型、输出与日志
-```
+└─ tools.py
+
+---
 
 ## 🚀 快速开始
-### 1. 准备运行环境
-1. 安装 Python 3.10+。
-2. 安装依赖：
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. 下载模型（可参考 FunASR 与 HuggingFace Hub），并放置到默认目录：
-   - `data/models/asr/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch`
-   - `data/models/punc/punc_ct-transformer_cn-en-common-vocab471067-large`
-   - `data/models/embedding/bge-small-zh-v1.5`
 
-### 2. 启动 Qdrant 向量数据库
+### 1) 安装依赖（Python 3.10+）
 ```bash
+pip install -r requirements.txt
+
+2) 配置环境变量
+
+复制示例并填写你的密钥等：
+cp config/.env.example config/.env
+
+.env 中常见变量：
+
+OPENAI_API_KEY=你的API密钥
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
+
+
+本项目使用 python-dotenv 自动读取 config/.env；.env 已在 .gitignore 中忽略，不会被上传。
+
+3) 准备模型
+
+方式 A（推荐）：执行根目录下脚本（若已提供）
+
+./setup_model.bat
+
+
+方式 B：手动放置至（示例）：
+
+data/models/asr/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+
+data/models/punc/punc_ct-transformer_cn-en-common-vocab471067-large
+
+data/models/embedding/bge-small-zh-v1.5
+
+4) 启动 Qdrant（向量数据库）
 docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
-```
-确保 `config/settings.py` 中的 `QDRANT_HOST` 与 `QDRANT_PORT` 指向可访问的实例。
 
-### 3. 运行命令行流程
-```bash
+
+确保 .env 或 config/settings.py 中的 QDRANT_HOST/PORT 与之匹配。
+
+5) 命令行运行
 python main.py --mode both --lesson 工程热力学
-```
-- `--mode asr`：只做实时录音+转写。
-- `--mode qa`：仅加载已有 JSONL 做问答。
-- `--mode both`：边录边写，并等待最新的转写结果后进入问答循环。
-- `--lesson`：课程/会议名称，会写入 JSONL 并用于热词配置。
 
-转写结果会以增量写入 `data/outputs/json/<timestamp>.jsonl`，日志默认保存在 `data/logs/`。
 
-### 4. 可选：启动 Web Demo
-```bash
+--mode asr：仅实时录音+转写
+
+--mode qa：仅对历史 JSONL 做问答
+
+--mode both：边录边转写并进入问答
+
+--lesson：课程/会议名称（写入 JSONL & 匹配热词）
+
+转写将增量写入：data/outputs/json/<timestamp>.jsonl
+日志保存在：data/logs/
+
+6) 启动 Web Demo（可选）
+
+Linux/macOS：
+
 export FLASK_APP=web_demo.app
 flask run --host 0.0.0.0 --port 5000
-```
-浏览器访问 `http://localhost:5000`，即可通过界面启动录制、查看实时转写与历史问答。
 
-## ⚙️ 配置说明
-- 若有自定义麦克风或声卡，可在 `config/settings.py` 中调整 `DEVICE`、`SAMPLE_RATE` 等参数。
-- `HOTWORDS` 字典用于针对不同课程启用专属热词；可按需扩展。
-- `BATCH_SIZE` 控制向量化批量提交的大小；过小会频繁写入，过大会增加延迟。
-- 默认日志级别为 `INFO`，可修改 `LOG_LEVEL` 或设置 `LOG_FILE` 输出路径。
 
-## 🧪 开发与调试建议
-- 在正式场景前使用短音频文件验证模型是否正确加载：`python test/test.py`。
-- 如果需要替换 LLM，可在 `src/llm/model_manager.py` 中扩展自定义模型（例如 OpenAI、Ollama、本地大模型）。
-- 建议为不同课程创建独立的 session，便于区分 JSONL 与 Qdrant 记录。
+Windows PowerShell：
 
-## 📄 License
-本项目代码仅用于个人学习与实验，暂未指定开源协议，请在遵守相应模型与数据授权的前提下使用。
+$env:FLASK_APP="web_demo.app"
+flask run --host 0.0.0.0 --port 5000
+
+
+访问 http://localhost:5000 使用图形界面录制/查看。
+
+⚙️ 配置说明
+
+采样与设备：在 config/settings.py 调整 SAMPLE_RATE、DEVICE 等
+
+热词：在 HOTWORDS 中为不同课程/会议配置专属词表
+
+向量化：BATCH_SIZE 决定批量提交大小（权衡延迟/吞吐）
+
+日志：默认 INFO，可设 LOG_LEVEL 或 LOG_FILE
+
+🧪 开发与调试
+
+先用短音频自测模型加载：python test/test.py
+
+可在 src/llm/model_manager.py 接入自定义 LLM（OpenAI / Ollama / 本地模型等）
+
+建议按课程管理 session，方便区分 JSONL 与向量库数据

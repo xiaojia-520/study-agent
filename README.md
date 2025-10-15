@@ -46,7 +46,7 @@ study-agent/
    ```bash
    pip install -r requirements.txt
    ```
-3. 复制 `.env.template` 为 `.env`（若不存在可新建），并写入自己的 `DEEPSEEK_API_KEY`。
+3. 在config/.env写入自己的 `DEEPSEEK_API_KEY`。
 4. 根据实际硬件在 `config/settings.py` 中调整 `AUDIO_DEVICE`、`SAMPLE_RATE` 等录音设备参数。
 5. 下载模型：直接运行仓库根目录的 `setup_model.bat`，会自动从官方渠道获取并解压所需 ASR、标点与向量模型到 `data/models/`。
 

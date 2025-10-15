@@ -14,19 +14,29 @@
 ## 🗂️ 目录速览
 ```
 study-agent/
-├─ main.py                 # 命令行入口，串联录音、ASR、嵌入、RAG
+├─ main.py                      # 命令行入口，串联录音、ASR、嵌入、RAG
+├─ setup_model.bat              # 一键下载并放置所需离线模型
 ├─ config/
-│  ├─ settings.py          # 采样率、模型路径、Qdrant 等全局配置
-│  └─ prompts.py           # LLM 提示词模板
+│  ├─ __init__.py
+│  ├─ settings.py               # 采样率、模型路径、Qdrant 等全局配置
+│  └─ prompts.py                # LLM 提示词模板
 ├─ src/
-│  ├─ asr/                 # 录音、VAD、ASR、标点等语音处理模块
-│  ├─ embedding/           # 嵌入模型与 Qdrant 管理
-│  ├─ llm/                 # 大模型封装与 RAG 逻辑
-│  ├─ models/              # 业务数据模型
-│  └─ utils/               # 日志、文件、时间等工具
-├─ web_demo/               # Flask Web 端示例
-├─ requirements.txt
-└─ data/                   # 建议放置模型、输出与日志
+│  ├─ __init__.py
+│  ├─ asr/                      # 录音、VAD、ASR、标点等语音处理模块
+│  ├─ embedding/                # 嵌入模型与 Qdrant 管理
+│  ├─ llm/                      # 大模型封装与 RAG 逻辑
+│  ├─ models/                   # 业务数据模型
+│  └─ utils/                    # 日志、文件、时间等工具
+├─ web_demo/
+│  ├─ __init__.py
+│  └─ app.py                    # Flask Web 前端入口
+├─ data/
+│  ├─ logs/                     # 运行日志（首次运行后生成）
+│  ├─ models/                   # 语音识别、标点、向量等模型存放目录
+│  └─ outputs/                  # JSONL 及向量化结果输出位置
+├─ tools.py                     # 常用维护脚本
+├─ test.py                      # 快速验证模型加载与流程
+└─ requirements.txt
 ```
 
 ## 🚀 快速开始
@@ -36,10 +46,9 @@ study-agent/
    ```bash
    pip install -r requirements.txt
    ```
-3. 下载模型（可参考 FunASR 与 HuggingFace Hub），并放置到默认目录：
-   - `data/models/asr/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch`
-   - `data/models/punc/punc_ct-transformer_cn-en-common-vocab471067-large`
-   - `data/models/embedding/bge-small-zh-v1.5`
+3. 复制 `.env.template` 为 `.env`（若不存在可新建），并写入自己的 `DEEPSEEK_API_KEY`。
+4. 根据实际硬件在 `config/settings.py` 中调整 `AUDIO_DEVICE`、`SAMPLE_RATE` 等录音设备参数。
+5. 下载模型：直接运行仓库根目录的 `setup_model.bat`，会自动从官方渠道获取并解压所需 ASR、标点与向量模型到 `data/models/`。
 
 ### 2. 启动 Qdrant 向量数据库
 ```bash
@@ -60,8 +69,7 @@ python main.py --mode both --lesson 工程热力学
 
 ### 4. 可选：启动 Web Demo
 ```bash
-export FLASK_APP=web_demo.app
-flask run --host 0.0.0.0 --port 5000
+python web_demo/app.py
 ```
 浏览器访问 `http://localhost:5000`，即可通过界面启动录制、查看实时转写与历史问答。
 
@@ -75,6 +83,3 @@ flask run --host 0.0.0.0 --port 5000
 - 在正式场景前使用短音频文件验证模型是否正确加载：`python test/test.py`。
 - 如果需要替换 LLM，可在 `src/llm/model_manager.py` 中扩展自定义模型（例如 OpenAI、Ollama、本地大模型）。
 - 建议为不同课程创建独立的 session，便于区分 JSONL 与 Qdrant 记录。
-
-## 📄 License
-本项目代码仅用于个人学习与实验，暂未指定开源协议，请在遵守相应模型与数据授权的前提下使用。

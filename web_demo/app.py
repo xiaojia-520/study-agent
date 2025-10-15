@@ -454,21 +454,6 @@ def api_ask_stream():
         response.headers["X-Accel-Buffering"] = "no"
         return response
 
-    @app.get("/api/history")
-    def api_history():
-        limit = request.args.get("limit", default=20, type=int)
-        try:
-            history = BRIDGE.get_conversation_history(limit=limit)
-            return jsonify({
-                "success": True,
-                "history": history
-            })
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "error": str(e)
-            }), 500
-
     def generate():
         session_id = BRIDGE.get_session_id()
         try:
@@ -495,20 +480,6 @@ def api_ask_stream():
     response.headers["X-Accel-Buffering"] = "no"
     return response
 
-@app.get("/api/history")
-def api_history():
-    limit = request.args.get("limit", default=20, type=int)
-    try:
-        history = BRIDGE.get_conversation_history(limit=limit)
-        return jsonify({
-            "success": True,
-            "history": history
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
 
 if __name__ == "__main__":  # pragma: no cover - script entry point
     logging.basicConfig(level=logging.INFO)

@@ -1,0 +1,8 @@
+Flask
+funasr
+langchain
+langchain_huggingface
+numpy
+silero_vad
+sounddevice
+python-dotenv

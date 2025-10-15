@@ -1,4 +1,10 @@
 from langchain.prompts import MessagesPlaceholder
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+api_key = os.getenv("DEEPSEEK_API_KEY")
 
 
 PROMPT_TEMPLATES = {
@@ -15,7 +21,7 @@ PROMPT_TEMPLATES = {
 MODELS = {
     "DEEPSEEK-CHAT": {
         'MODEL_NAME': 'deepseek-chat',
-        'API_KEY': 'sk-fe9af4ecdf384b7a8a8d99567c3fca06',
+        'API_KEY': f'{api_key}',
         'BASE_URL': 'https://api.deepseek-chat.com',
         'PROVIDER': 'deepseek',
     }

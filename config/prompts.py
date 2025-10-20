@@ -18,6 +18,17 @@ PROMPT_TEMPLATES = {
     ]
 }
 
+AUTO_QUESTION_REPLY_PROMPT_TEMPLATES = {
+    "DEEPSEEK_CHAT": [
+        ("system", "回答用户问题"),
+        (
+            "user",
+            "我在上:{lesson}课程,老师的问题是{questions}"
+        )
+
+    ]
+}
+
 MODELS = {
     "DEEPSEEK-CHAT": {
         'MODEL_NAME': 'deepseek-chat',

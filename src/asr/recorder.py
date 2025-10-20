@@ -6,6 +6,10 @@ import logging
 from pathlib import Path
 from ..utils.file_utils import BASE_DIR, ensure_directory, get_next_id, write_jsonl
 from ..utils.time_utils import get_current_time, format_time
+from collections import deque
+import threading
+from queue import Queue, Empty, Full
+from src.asr.vad_processor import VADProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +22,23 @@ class AudioRecorder:
         self.is_recording = False
         self.log_file: Optional[str] = None
         self.lesson_name: Optional[str] = None
+        self._cb_queue = Queue(maxsize=256)
+        self._overflow_warned = False
 
     def start_recording(self, vad_processor, asr_processor, embedding_manager, lesson_name: str):
         """开始录制和处理"""
         self.is_recording = True
         self.lesson_name = lesson_name
+        if vad_processor is None:
+            vad_processor = VADProcessor()
 
         with sd.InputStream(
                 samplerate=config.SAMPLE_RATE,
                 channels=config.CHANNELS,
                 dtype='float32',
-                device=config.DEVICE
+                device=config.DEVICE,
+                blocksize=512,
+                callback=self._audio_callback,
         ) as stream:
             self._recording_loop(stream, vad_processor, asr_processor, embedding_manager, lesson_name)
 
@@ -36,11 +46,11 @@ class AudioRecorder:
         """录制循环"""
 
         audio_chunk = []
-        prev_audio_chunk = []
         speaking = False
         silence_start = get_current_time()
         speaking_start = None
         prev_chunk_stride = int(0.2 * config.SAMPLE_RATE / 512)
+        prev_audio_chunk = deque(maxlen=prev_chunk_stride)
 
         log_dir = Path(BASE_DIR) / "data" / "outputs" / "json"
         ensure_directory(str(log_dir))
@@ -48,11 +58,12 @@ class AudioRecorder:
         self.log_file = str(log_file_path)
 
         while self.is_recording:
-            samples, overflowed = stream.read(512)
-            if overflowed:
-                logger.warning("缓冲区溢出，有音频数据丢失")
-
-            samples = samples[:, 0]  # 转换为单声道
+            samples = None
+            # 等队列有数据；不给死等，避免无法停机
+            try:
+                samples = self._cb_queue.get(timeout=0.01)  # 最多等10ms
+            except Empty:
+                continue
 
             speech_dict = vad_processor.process_samples(samples)
 
@@ -69,8 +80,6 @@ class AudioRecorder:
                 audio_chunk.append(samples)
             else:
                 prev_audio_chunk.append(samples)
-                if len(prev_audio_chunk) > prev_chunk_stride:
-                    prev_audio_chunk.pop(0)
 
             if speech_dict and 'end' in speech_dict:
                 speaking = False
@@ -96,10 +105,13 @@ class AudioRecorder:
                                asr_processor, embedding_manager, lesson_name, log_file):
         """处理音频片段"""
 
+        if start_time is None or end_time is None:
+            return
+
         if not prev_chunk and not current_chunk:
             return
 
-        audio = np.concatenate(prev_chunk + current_chunk)
+        audio = np.concatenate([*list(prev_chunk), *current_chunk], axis=0)
 
         try:
             # 语音识别
@@ -131,6 +143,21 @@ class AudioRecorder:
         except Exception as e:
             logger.error(f"音频处理失败: {e}")
 
+    def _audio_callback(self, indata, frames, ctime, status):
+        if status and status.input_overflow and not self._overflow_warned:
+            logger.warning("检测到缓冲区溢出（同类警告仅提示一次）")
+            self._overflow_warned = True
+        if indata.ndim == 2:
+            indata = indata[:, 0]
+
+        try:
+            self._cb_queue.put_nowait(indata.copy())
+        except Full:
+            try:
+                self._cb_queue.get_nowait()
+                self._cb_queue.put_nowait(indata.copy())
+            except Exception:
+                pass
     def stop_recording(self):
         """停止录制"""
         self.is_recording = False

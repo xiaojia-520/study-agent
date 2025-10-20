@@ -257,3 +257,12 @@ class RAGProcessor:
 
         return history[-limit:]
 
+
+    def auto_reply_questions(
+            self,
+            questions: str,
+            session_id: Optional[str] = None,
+    ):
+        return
+
+

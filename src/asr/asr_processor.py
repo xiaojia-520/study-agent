@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 class ASRProcessor:
     """语音识别处理器"""
 
-    def __init__(self):
+    def __init__(self, hotwords):
         self.model = None
         self.punc_processor: Optional[object] = None
+        self.hotword_str = " ".join(hotwords) if hotwords else None
         self._initialize_model()
 
     def _initialize_model(self):
@@ -32,9 +33,8 @@ class ASRProcessor:
         """转录音频数据"""
         if self.model is None:
             self._initialize_model()
-
         try:
-            result = self.model.inference(audio_data * 32768)
+            result = self.model.inference(audio_data * 32768, hotword=self.hotword_str)
             text = "".join(item["text"].replace(" ", "") for item in result)
             if self.punc_processor and text:
                 try:

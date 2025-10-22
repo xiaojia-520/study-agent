@@ -4,6 +4,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from config.settings import config
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 import sounddevice as sd
+from config.settings import config
 
 client = QdrantClient(host="localhost", port=6333)
 
@@ -44,6 +45,14 @@ def search_collection(collection_name, q):
 
 def delete_collection(collection_name):
     return client.delete_collection(collection_name)
+
+
+def get_hotwords(lesson_name: str,):
+    """根据课名返回热词列表"""
+    for key, words in config.HOTWORDS_DICT.items():
+        if key in lesson_name:
+            return words
+    return []
 
 print(sd.query_devices())
 

@@ -22,6 +22,7 @@ from config.settings import config
 import argparse
 from threading import Thread
 from src.utils.file_utils import find_jsonl_file
+from tools import get_hotwords
 
 
 def main():
@@ -51,7 +52,12 @@ def main():
     try:
         # 初始化组件
         vad_processor = VADProcessor()
-        asr_processor = ASRProcessor()
+        hotwords = get_hotwords(lesson_name)
+        if hotwords:
+            print(f"已匹配到热词：{hotwords[:5]} ...")
+        else:
+            print("未匹配到热词，将不使用热词。")
+        asr_processor = ASRProcessor(hotwords=hotwords)
         punc_processor = PuncProcessor()
         embedding_manager = EmbeddingManager()
 

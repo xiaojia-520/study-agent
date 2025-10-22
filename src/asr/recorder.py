@@ -158,6 +158,7 @@ class AudioRecorder:
                 self._cb_queue.put_nowait(indata.copy())
             except Exception:
                 pass
+
     def stop_recording(self):
         """停止录制"""
         self.is_recording = False
